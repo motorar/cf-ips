@@ -1,0 +1,32 @@
+name: Extract TW IPs
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上 8 点运行
+  workflow_dispatch:      # 允许你在页面上手动点击运行（方便测试）
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download and Filter
+        run: |
+          # 1. 下载源文件
+          # 2. 提取 HK 关键词
+          # 3. cut 命令去掉 # 及其后面的备注，只保留 IP:Port
+          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" | cut -d'#' -f1 > hk_ips.txt
+          echo "提取完成，结果如下："
+          cat hk_ips.txt
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add tw_ips.txt
+          git commit -m "自动更新 hk IP 列表 $(date)" || exit 0
+          git push
