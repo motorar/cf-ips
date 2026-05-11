@@ -19,9 +19,9 @@ jobs:
           # 1. 下载源文件
           # 2. 提取 HK 关键词
           # 3. cut 去掉延迟备注
-          # 4. head -n 8 只取前 8 行
-          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" | cut -d' ' -f1 | head -n 8 > hk_ips.txt
-          echo "提取完成，已限制为前 8 个 IP："
+          # 4. head -n 5 只取前 5 行
+          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" | cut -d' ' -f1 | head -n 5 > hk_ips.txt
+          echo "提取完成，已限制为前 5 个 IP："
           cat hk_ips.txt
 
       - name: Commit and Push
