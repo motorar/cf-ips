@@ -1,4 +1,4 @@
-name: Extract TW IPs
+name: Extract HK IPs
 
 on:
   schedule:
