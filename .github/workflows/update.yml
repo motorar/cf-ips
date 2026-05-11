@@ -3,7 +3,7 @@ name: Extract HK IPs
 on:
   schedule:
     - cron: '0 0 * * *' # 每天北京时间早上 8 点运行
-  workflow_dispatch:      # 允许你在页面上手动点击运行（方便测试）
+  workflow_dispatch:      # 允许手动点击运行
 
 jobs:
   extract:
@@ -16,17 +16,17 @@ jobs:
 
       - name: Download and Filter
         run: |
-          # 1. 下载源文件
-          # 2. 提取 HK 关键词
-          # 3. cut 命令去掉 # 及其后面的备注，只保留 IP:Port
+          # 1. 下载源文件，提取包含 HK 的行，并只保留 IP:Port
           curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" | cut -d'#' -f1 > hk_ips.txt
-          echo "提取完成，结果如下："
-          cat hk_ips.txt
+          echo "提取完成，HK IP 预览："
+          head -n 5 hk_ips.txt
 
       - name: Commit and Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add tw_ips.txt
-          git commit -m "自动更新 hk IP 列表 $(date)" || exit 0
+          # 注意：这里必须 add 你上面实际生成的那个文件名
+          git add hk_ips.txt
+          # 提交更改，如果没有变动则跳过
+          git commit -m "Update HK IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
           git push
