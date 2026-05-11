@@ -1,0 +1,32 @@
+name: Extract GB IPs
+
+on:
+  schedule:
+    - cron: '10 0 * * *' # 每天北京时间早上 8:10 运行（错开之前的 HK 任务）
+  workflow_dispatch:      # 允许手动点击运行
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download and Filter
+        run: |
+          # 1. 抓取包含 GB（英国）的 IP
+          # 2. cut 取空格前的部分（保留 IP:Port#备注，去掉延迟）
+          # 3. head -n 4 只保留前 4 个
+          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "GB" | cut -d' ' -f1 | head -n 4 > gb_ips.txt
+          echo "提取完成，英国 GB 节点预览："
+          cat gb_ips.txt
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add gb_ips.txt
+          git commit -m "Update GB IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push
