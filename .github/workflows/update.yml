@@ -17,7 +17,7 @@ jobs:
       - name: Download and Filter
         run: |
           # 1. 下载源文件，提取包含 HK 的行，并只保留 IP:Port
-          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" | cut -d'#' -f1 > hk_ips.txt
+          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "HK" > hk_ips.txt
           echo "提取完成，HK IP 预览："
           head -n 5 hk_ips.txt
 
