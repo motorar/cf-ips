@@ -2,7 +2,7 @@ name: Extract IPv6 IPs
 
 on:
   schedule:
-    - cron: '20 0 * * *' # 每天北京时间早上 8:20 运行（再次错开时间）
+    - cron: '20 0 * * *' # 每天北京时间早上 8:20 运行
   workflow_dispatch:      # 允许手动点击运行
 
 jobs:
@@ -16,16 +16,15 @@ jobs:
 
       - name: Download and Filter
         run: |
-          # 1. 抓取源文件
-          # 2. 使用 grep 过滤包含冒号的行（IPv6 的特征）
-          # 3. head -n 8 只取前 8 个
-          # 4. 加上 #IPv6 备注，方便你在 Clash 列表里识别
+          # 1. 使用 -sL 追踪重定向并下载
+          # 2. 提取包含冒号的行（IPv6 特征）
+          # 3. 只保留前 8 行
+          # 4. 直接输出原始整行内容（保留原作者的所有备注）
           curl -sL https://github.com/DustinWin/BestCF/releases/download/bestcf/ctcc-ip.txt | \
           grep ":" | \
-          head -n 8 | \
-          awk '{print $1"#IPv6_"$1}' > ipv6_ips.txt
+          head -n 8 > ipv6_ips.txt
           
-          echo "提取完成，IPv6 节点预览："
+          echo "提取完成，保留原始备注的预览："
           cat ipv6_ips.txt
 
       - name: Commit and Push
@@ -33,5 +32,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add ipv6_ips.txt
-          git commit -m "Update IPv6 IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git commit -m "Update IPv6 IP list with original notes $(date +'%Y-%m-%d %H:%M')" || exit 0
           git push
