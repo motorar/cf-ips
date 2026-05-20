@@ -2,7 +2,7 @@ name: Extract JP IPs
 
 on:
   schedule:
-    - cron: '10 0 * * *' # 每天北京时间早上 8:10 运行（错开之前的 HK 任务）
+    - cron: '10 0 * * *' # 每天北京时间早上 8:10 运行
   workflow_dispatch:      # 允许手动点击运行
 
 jobs:
@@ -16,11 +16,18 @@ jobs:
 
       - name: Download and Filter
         run: |
-          # 1. 抓取包含 日本（日本）的 IP
-          # 2. cut 取空格前的部分（保留 IP:Port#备注，去掉延迟）
-          # 3. head -n 4 只保留前 4 个
-          curl -s https://bestcf.pages.dev/moistr/all.txt | grep "JP" | cut -d' ' -f1 | head -n 4 > jp_ips.txt
-          echo "提取完成，日本 日本 节点预览："
+          # 1. 抓取包含 JP 的行
+          # 2. 清理原有备注，提取纯 IP:Port（用 cut 分隔空格，再用 awk 清理 # 及其后面的旧备注）
+          # 3. 使用 awk 循环，自动加上 #日本第一、#日本第二 这样的新备注，并限制只取前 4 行
+          curl -s https://bestcf.pages.dev/moistr/all.txt | grep "JP" | cut -d' ' -f1 | awk -F'#' '{print $1}' | awk '
+          BEGIN {
+            split("第一 第二 第三 第四", c, " ")
+          }
+          NR<=4 {
+            print $0 "#日本" c[NR]
+          }' > jp_ips.txt
+
+          echo "提取完成，日本节点预览："
           cat jp_ips.txt
 
       - name: Commit and Push
@@ -28,5 +35,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add jp_ips.txt
-          git commit -m "Update GB IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
           git push
