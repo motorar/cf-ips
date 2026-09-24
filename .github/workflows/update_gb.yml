@@ -2,31 +2,101 @@ name: Extract GB IPs
 
 on:
   schedule:
-    - cron: '10 0 * * *' # 每天北京时间早上 8:10 运行（错开之前的 HK 任务）
-  workflow_dispatch:      # 允许手动点击运行
+    - cron: '10 0 * * *' # 每天北京时间 08:10
+  workflow_dispatch:
 
 jobs:
   extract:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Download and Filter
         run: |
-          # 1. 抓取包含 GB（英国）的 IP
-          # 2. cut 取空格前的部分（保留 IP:Port#备注，去掉延迟）
-          # 3. head -n 4 只保留前 4 个
-          curl -s https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt | grep "GB" | cut -d' ' -f1 | head -n 4 > gb_ips.txt
-          echo "提取完成，英国 GB 节点预览："
+          set -euo pipefail
+
+          URL="https://raw.githubusercontent.com/HandsomeMJZ/cfip/main/full_ips.txt"
+
+          echo "开始下载 IP 列表..."
+
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 3 \
+            --connect-timeout 20 \
+            --max-time 60 \
+            "$URL" \
+            -o full_ips.txt
+
+          echo "下载完成："
+          wc -l full_ips.txt
+
+          echo "开始筛选 GB 节点..."
+
+          # 1. 筛选 GB
+          # 2. 提取速度
+          # 3. 按速度从高到低排序
+          # 4. 取前 8 个作为候选池
+          # 5. 每天随机抽取 4 个
+          awk '
+          BEGIN {
+            srand()
+          }
+
+          $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+#GB$/ {
+
+            ip = $1
+            speed = $NF
+
+            # 提取速度中的数字
+            gsub(/[^0-9.]/, "", speed)
+
+            if (speed == "")
+              speed = 0
+
+            # 防止重复节点
+            if (!seen[ip]++) {
+              print speed "\t" rand() "\t" ip
+            }
+          }
+          ' full_ips.txt \
+          | sort -k1,1nr -k2,2n \
+          | head -n 8 \
+          | shuf \
+          | head -n 4 \
+          | cut -f3 > gb_ips.txt
+
+          echo ""
+          echo "最终选出的 GB 节点："
           cat gb_ips.txt
+
+          # 防止上游异常导致空文件
+          if [ ! -s gb_ips.txt ]; then
+            echo "错误：没有找到任何 GB 节点！"
+            exit 1
+          fi
+
+          COUNT=$(wc -l < gb_ips.txt)
+
+          if [ "$COUNT" -lt 4 ]; then
+            echo "错误：GB 节点不足 4 个，实际只有 $COUNT 个！"
+            exit 1
+          fi
 
       - name: Commit and Push
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add gb_ips.txt
-          git commit -m "Update GB IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
+
+          if git diff --cached --quiet; then
+            echo "GB IP 列表没有变化，无需提交。"
+            exit 0
+          fi
+
+          git commit -m "Update GB IP list $(date +'%Y-%m-%d %H:%M')"
           git push
