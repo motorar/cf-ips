@@ -19,7 +19,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          URL="https://bestcf.pages.dev/moistr/all.txt"
+          URL="https://bestcf.pages.dev/s5gy/jp.txt"
 
           echo "开始下载 IP 列表..."
           curl -fsSL \
