@@ -3,7 +3,7 @@ name: Extract JP IPs
 on:
 schedule:
 - cron: '10 0 * * *' # 每天北京时间 08:10
-workflow_dispatch: # 允许手动点击运行
+workflow_dispatch:      # 允许手动点击运行
 
 jobs:
 extract:
@@ -11,6 +11,7 @@ runs-on: ubuntu-latest
 permissions:
 contents: write
 
+```
 steps:
   - name: Checkout code
     uses: actions/checkout@v4
@@ -100,3 +101,4 @@ steps:
 
       git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')"
       git push
+```
