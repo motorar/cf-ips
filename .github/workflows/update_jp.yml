@@ -8,7 +8,7 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
-    timeout-minutes: 5 # 核心防御 1：强制超时保护，最多跑 5 分钟自动强杀，杜绝卡死挂起
+    timeout-minutes: 5
     permissions:
       contents: write
 
@@ -56,20 +56,18 @@ jobs:
             exit 1
           fi
 
-          # 核心防御 2：绝不全量测速！仅随机抽取前 20 个进行测速，3 秒内测完
+          # 抽取 20 个样本快速测速
           TEST_SAMPLE=$(( TOTAL_CANDIDATES < 20 ? TOTAL_CANDIDATES : 20 ))
           shuf -n "$TEST_SAMPLE" candidate_ips.txt > sample_ips.txt
 
           echo "正在对抽取的 $TEST_SAMPLE 个样本节点进行极速连通性测试..."
 
-          # 核心防御 3：写入带 -m 2 (绝对总超时2秒) 的轻量探针
           cat << 'EOF' > test_ping.sh
           #!/usr/bin/env bash
           line="$1"
           ip="${line%:*}"
           port="${line#*:}"
 
-          # --connect-timeout 1.5 握手超时，-m 2 整个请求绝对总超时，双保险决不挂死
           latency=$(curl -s -o /dev/null -w "%{time_connect}" --connect-timeout 1.5 -m 2 "http://$ip:$port" 2>/dev/null || echo "")
 
           if [ -n "$latency" ] && [ "$latency" != "0.000" ]; then
@@ -78,13 +76,11 @@ jobs:
           EOF
           chmod +x test_ping.sh
 
-          # 20 线程全并发并发探测，瞬间结束
           xargs -P 20 -n 1 ./test_ping.sh < sample_ips.txt | sort -n > alive_ips.txt || true
 
           ALIVE_COUNT=$(wc -l < alive_ips.txt || echo 0)
           echo "测速完毕，响应合格的存活节点数：$ALIVE_COUNT 个"
 
-          # 提取延迟最低的前 4 个；若样本均无响应则直接从候选池保底抽 4 个
           if [ "$ALIVE_COUNT" -ge 1 ]; then
             head -n 4 alive_ips.txt | awk '{print $2}' > top_ips.txt
           else
@@ -92,18 +88,20 @@ jobs:
             shuf -n 4 candidate_ips.txt > top_ips.txt
           fi
 
-          # 格式化输出为 日本第一 ~ 日本第四
+          # 格式化输出：截取纯 IP 并追加到备注末尾
           awk '
           BEGIN {
             split("第一 第二 第三 第四", c, " ")
           }
           {
             tag = (NR <= 4 && c[NR] != "") ? c[NR] : NR
-            print $0 "#日本" tag
+            ip = $0
+            sub(/:[0-9]+$/, "", ip)
+            print $0 "#日本" tag ip
           }
           ' top_ips.txt > jp_ips.txt
 
-          # 清理全部临时文件
+          # 清理临时文件
           rm -f all.txt candidate_ips.txt sample_ips.txt test_ping.sh alive_ips.txt top_ips.txt
 
           echo ""
