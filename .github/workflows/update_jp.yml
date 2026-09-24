@@ -15,7 +15,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download and Filter
+      - name: Download, Test and Filter
         run: |
           set -euo pipefail
 
@@ -30,22 +30,15 @@ jobs:
             "$URL" \
             -o all.txt
 
-          echo "下载完成，原始文件行数："
-          wc -l all.txt
+          echo "下载完成，行数：$(wc -l < all.txt)"
+          echo "开始初步清洗并筛选 JP / 日本节点..."
 
-          echo "开始清洗并筛选 JP / 日本节点..."
-
-          # 1. tr -d '\r' 清除 Windows 回车符，防止格式被污染
-          # 2. 忽略大小写匹配 JP、Japan、日本等地区标识
-          # 3. 提取有效 IP:Port，过滤纯注释行与空行，并去重
+          # 1. 提取有效格式的日本/JP 节点候选列表
           tr -d '\r' < all.txt | awk '
           BEGIN { IGNORECASE = 1 }
           /JP|Japan|日本/ {
             line = $1
-            # 去掉原有 # 及其后面的备注
             sub(/#.*/, "", line)
-
-            # 严格校验：确保提取内容非空且包含冒号端口（避免匹配到开头的纯注释行）
             if (line ~ /^[0-9a-zA-Z\.\:]+:[0-9]+$/) {
               if (!seen[line]++) {
                 print line
@@ -54,18 +47,51 @@ jobs:
           }
           ' > candidate_ips.txt
 
-          TOTAL_FOUND=$(wc -l < candidate_ips.txt || echo 0)
-          echo "筛选出不重复的有效日本节点数：$TOTAL_FOUND"
+          TOTAL_CANDIDATES=$(wc -l < candidate_ips.txt || echo 0)
+          echo "共发现候选日本节点：$TOTAL_CANDIDATES 个"
 
-          if [ "$TOTAL_FOUND" -eq 0 ]; then
-            echo "::error::未找到任何日本/JP节点，流程终止！"
+          if [ "$TOTAL_CANDIDATES" -eq 0 ]; then
+            echo "::error::未找到任何候选日本/JP节点，流程终止！"
             rm -f all.txt candidate_ips.txt
             exit 1
           fi
 
-          # 随机抽取最多 4 个节点（不足 4 个则取全部）
-          PICK_NUM=$(( TOTAL_FOUND < 4 ? TOTAL_FOUND : 4 ))
-          shuf -n "$PICK_NUM" candidate_ips.txt | awk '
+          echo "开始并发测速（测试 TCP 握手连通性与响应时间）..."
+
+          # 2. 编写轻量级单节点测速探针
+          cat << 'EOF' > test_ping.sh
+          #!/usr/bin/env bash
+          line="$1"
+          ip="${line%:*}"
+          port="${line#*:}"
+
+          # 测试 TCP 连接延迟，超时设为 1.5 秒
+          latency=$(curl -s -o /dev/null -w "%{time_connect}" --connect-timeout 1.5 "http://$ip:$port" 2>/dev/null || echo "")
+
+          # 如果测通且延迟有效，输出：延迟值(秒) IP:端口
+          if [ -n "$latency" ] && [ "$latency" != "0.000" ]; then
+            echo "$latency $line"
+          fi
+          EOF
+          chmod +x test_ping.sh
+
+          # 3. 启用 15 线程并发测速，并将结果按延迟由低到高升序排列
+          xargs -P 15 -n 1 ./test_ping.sh < candidate_ips.txt | sort -n > alive_ips.txt || true
+
+          ALIVE_COUNT=$(wc -l < alive_ips.txt || echo 0)
+          echo "测速完毕，存活可用节点数：$ALIVE_COUNT 个"
+
+          # 4. 如果测活成功的节点存在，优先从测活结果取；如果都不通，则降级从候选池随机取
+          if [ "$ALIVE_COUNT" -gt 0 ]; then
+            echo "正在按延迟最低提取前 4 个优质节点..."
+            head -n 4 alive_ips.txt | awk '{print $2}' > top_ips.txt
+          else
+            echo "::warning::测速未发现可用节点（可能临时受限），自动降级为随机抽取 4 个候选节点..."
+            shuf -n 4 candidate_ips.txt > top_ips.txt
+          fi
+
+          # 5. 格式化并标记 1~4 号
+          awk '
           BEGIN {
             split("第一 第二 第三 第四", c, " ")
           }
@@ -73,14 +99,15 @@ jobs:
             tag = (NR <= 4 && c[NR] != "") ? c[NR] : NR
             print $0 "#日本" tag
           }
-          ' > jp_ips.txt
+          ' top_ips.txt > jp_ips.txt
 
           # 清理临时文件
-          rm -f all.txt candidate_ips.txt
+          rm -f all.txt candidate_ips.txt test_ping.sh alive_ips.txt top_ips.txt
 
           echo ""
-          echo "提取完成，最终生成的日本节点预览："
+          echo "================ 最终优选出的日本节点 ================"
           cat jp_ips.txt
+          echo "====================================================="
 
       - name: Commit and Push
         run: |
@@ -94,5 +121,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update JP IP list $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git commit -m "Update JP IP list (Speed-tested) $(date -u +'%Y-%m-%d %H:%M') UTC"
           git push
