@@ -8,6 +8,7 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # 核心防御 1：强制超时保护，最多跑 5 分钟自动强杀，杜绝卡死挂起
     permissions:
       contents: write
 
@@ -25,15 +26,14 @@ jobs:
           curl -fsSL \
             --retry 3 \
             --retry-delay 3 \
-            --connect-timeout 20 \
-            --max-time 60 \
+            --connect-timeout 15 \
+            --max-time 30 \
             "$URL" \
             -o all.txt
 
-          echo "下载完成，行数：$(wc -l < all.txt)"
-          echo "开始初步清洗并筛选 JP / 日本节点..."
+          echo "下载完成，原始文件行数：$(wc -l < all.txt)"
 
-          # 1. 提取有效格式的日本/JP 节点候选列表
+          # 1. 严格清洗提取所有日本 IP:Port，去重
           tr -d '\r' < all.txt | awk '
           BEGIN { IGNORECASE = 1 }
           /JP|Japan|日本/ {
@@ -48,49 +48,51 @@ jobs:
           ' > candidate_ips.txt
 
           TOTAL_CANDIDATES=$(wc -l < candidate_ips.txt || echo 0)
-          echo "共发现候选日本节点：$TOTAL_CANDIDATES 个"
+          echo "共清洗出有效日本候选节点：$TOTAL_CANDIDATES 个"
 
           if [ "$TOTAL_CANDIDATES" -eq 0 ]; then
-            echo "::error::未找到任何候选日本/JP节点，流程终止！"
+            echo "::error::未找到任何日本/JP节点，流程终止！"
             rm -f all.txt candidate_ips.txt
             exit 1
           fi
 
-          echo "开始并发测速（测试 TCP 握手连通性与响应时间）..."
+          # 核心防御 2：绝不全量测速！仅随机抽取前 20 个进行测速，3 秒内测完
+          TEST_SAMPLE=$(( TOTAL_CANDIDATES < 20 ? TOTAL_CANDIDATES : 20 ))
+          shuf -n "$TEST_SAMPLE" candidate_ips.txt > sample_ips.txt
 
-          # 2. 编写轻量级单节点测速探针
+          echo "正在对抽取的 $TEST_SAMPLE 个样本节点进行极速连通性测试..."
+
+          # 核心防御 3：写入带 -m 2 (绝对总超时2秒) 的轻量探针
           cat << 'EOF' > test_ping.sh
           #!/usr/bin/env bash
           line="$1"
           ip="${line%:*}"
           port="${line#*:}"
 
-          # 测试 TCP 连接延迟，超时设为 1.5 秒
-          latency=$(curl -s -o /dev/null -w "%{time_connect}" --connect-timeout 1.5 "http://$ip:$port" 2>/dev/null || echo "")
+          # --connect-timeout 1.5 握手超时，-m 2 整个请求绝对总超时，双保险决不挂死
+          latency=$(curl -s -o /dev/null -w "%{time_connect}" --connect-timeout 1.5 -m 2 "http://$ip:$port" 2>/dev/null || echo "")
 
-          # 如果测通且延迟有效，输出：延迟值(秒) IP:端口
           if [ -n "$latency" ] && [ "$latency" != "0.000" ]; then
             echo "$latency $line"
           fi
           EOF
           chmod +x test_ping.sh
 
-          # 3. 启用 15 线程并发测速，并将结果按延迟由低到高升序排列
-          xargs -P 15 -n 1 ./test_ping.sh < candidate_ips.txt | sort -n > alive_ips.txt || true
+          # 20 线程全并发并发探测，瞬间结束
+          xargs -P 20 -n 1 ./test_ping.sh < sample_ips.txt | sort -n > alive_ips.txt || true
 
           ALIVE_COUNT=$(wc -l < alive_ips.txt || echo 0)
-          echo "测速完毕，存活可用节点数：$ALIVE_COUNT 个"
+          echo "测速完毕，响应合格的存活节点数：$ALIVE_COUNT 个"
 
-          # 4. 如果测活成功的节点存在，优先从测活结果取；如果都不通，则降级从候选池随机取
-          if [ "$ALIVE_COUNT" -gt 0 ]; then
-            echo "正在按延迟最低提取前 4 个优质节点..."
+          # 提取延迟最低的前 4 个；若样本均无响应则直接从候选池保底抽 4 个
+          if [ "$ALIVE_COUNT" -ge 1 ]; then
             head -n 4 alive_ips.txt | awk '{print $2}' > top_ips.txt
           else
-            echo "::warning::测速未发现可用节点（可能临时受限），自动降级为随机抽取 4 个候选节点..."
+            echo "::warning::样本测速未响应，触发保底机制，直接提取 4 个候选节点..."
             shuf -n 4 candidate_ips.txt > top_ips.txt
           fi
 
-          # 5. 格式化并标记 1~4 号
+          # 格式化输出为 日本第一 ~ 日本第四
           awk '
           BEGIN {
             split("第一 第二 第三 第四", c, " ")
@@ -101,13 +103,13 @@ jobs:
           }
           ' top_ips.txt > jp_ips.txt
 
-          # 清理临时文件
-          rm -f all.txt candidate_ips.txt test_ping.sh alive_ips.txt top_ips.txt
+          # 清理全部临时文件
+          rm -f all.txt candidate_ips.txt sample_ips.txt test_ping.sh alive_ips.txt top_ips.txt
 
           echo ""
-          echo "================ 最终优选出的日本节点 ================"
+          echo "================ 最终优选出的 4 个日本节点 ================"
           cat jp_ips.txt
-          echo "====================================================="
+          echo "=========================================================="
 
       - name: Commit and Push
         run: |
@@ -121,5 +123,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update JP IP list (Speed-tested) $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git commit -m "Update JP IP list (Fast-tested) $(date -u +'%Y-%m-%d %H:%M') UTC"
           git push
