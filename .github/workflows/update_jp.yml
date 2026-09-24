@@ -4,7 +4,7 @@ name: Extract JP IPs
 on:
   schedule:
     - cron: '10 0 * * *' # 每天北京时间 08:10
-  workflow_dispatch:
+  workflow_dispatch:      # 允许手动点击运行
 
 jobs:
   extract:
@@ -37,48 +37,29 @@ jobs:
 
           echo "开始筛选 JP / 日本 节点..."
 
-          # 1. 筛选包含 JP 或 日本 的行
+          # 1. 抓取包含 JP 或 日本 的行
           # 2. 提取第一个空格前的 IP:Port#备注
-          # 3. 去掉原有 # 备注
-          # 4. 提取速度
-          # 5. 按速度从高到低排序
-          # 6. 取速度最高的 8 个作为候选池
-          # 7. 每天随机抽取 4 个
-          # 8. 自动添加 #日本第一 ～ #日本第四
+          # 3. 去掉原有 # 及其后面的备注
+          # 4. 去重
+          # 5. 随机抽取 4 个
+          # 6. 自动添加 #日本第一 ～ #日本第四
 
           awk '
-          BEGIN {
-            srand()
-          }
-
           /JP|日本/ {
 
-            # 取第一个字段
             ip_port = $1
 
             # 去掉原有 # 及后面的备注
             sub(/#.*/, "", ip_port)
 
-            # 最后一个字段作为速度
-            speed = $NF
-
-            # 提取速度中的数字
-            gsub(/[^0-9.]/, "", speed)
-
-            if (speed == "")
-              speed = 0
-
             # 去重
             if (!seen[ip_port]++) {
-              print speed "\t" rand() "\t" ip_port
+              print ip_port
             }
           }
           ' all.txt \
-          | sort -k1,1nr -k2,2n \
-          | head -n 8 \
           | shuf \
           | head -n 4 \
-          | cut -f3 \
           | awk '
           BEGIN {
             split("第一 第二 第三 第四", c, " ")
