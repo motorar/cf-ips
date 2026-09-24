@@ -1,39 +1,123 @@
+```yaml
 name: Extract JP IPs
 
 on:
   schedule:
-    - cron: '10 0 * * *' # 每天北京时间早上 8:10 运行
-  workflow_dispatch:      # 允许手动点击运行
+    - cron: '10 0 * * *' # 每天北京时间 08:10
+  workflow_dispatch:
 
 jobs:
   extract:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Download and Filter
         run: |
-          # 1. 抓取包含 JP 的行
-          # 2. 清理原有备注，提取纯 IP:Port（用 cut 分隔空格，再用 awk 清理 # 及其后面的旧备注）
-          # 3. 使用 awk 循环，自动加上 #日本第一、#日本第二 这样的新备注，并限制只取前 4 行
-          curl -s https://bestcf.pages.dev/moistr/all.txt | grep "JP" | cut -d' ' -f1 | awk -F'#' '{print $1}' | awk '
+          set -euo pipefail
+
+          URL="https://bestcf.pages.dev/moistr/all.txt"
+
+          echo "开始下载 IP 列表..."
+
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 3 \
+            --connect-timeout 20 \
+            --max-time 60 \
+            "$URL" \
+            -o all.txt
+
+          echo "下载完成："
+          wc -l all.txt
+
+          echo "开始筛选 JP / 日本 节点..."
+
+          # 1. 筛选包含 JP 或 日本 的行
+          # 2. 提取第一个空格前的 IP:Port#备注
+          # 3. 去掉原有 # 备注
+          # 4. 提取速度
+          # 5. 按速度从高到低排序
+          # 6. 取速度最高的 8 个作为候选池
+          # 7. 每天随机抽取 4 个
+          # 8. 自动添加 #日本第一 ～ #日本第四
+
+          awk '
+          BEGIN {
+            srand()
+          }
+
+          /JP|日本/ {
+
+            # 取第一个字段
+            ip_port = $1
+
+            # 去掉原有 # 及后面的备注
+            sub(/#.*/, "", ip_port)
+
+            # 最后一个字段作为速度
+            speed = $NF
+
+            # 提取速度中的数字
+            gsub(/[^0-9.]/, "", speed)
+
+            if (speed == "")
+              speed = 0
+
+            # 去重
+            if (!seen[ip_port]++) {
+              print speed "\t" rand() "\t" ip_port
+            }
+          }
+          ' all.txt \
+          | sort -k1,1nr -k2,2n \
+          | head -n 8 \
+          | shuf \
+          | head -n 4 \
+          | cut -f3 \
+          | awk '
           BEGIN {
             split("第一 第二 第三 第四", c, " ")
           }
-          NR<=4 {
-            print $0 "#日本" c[NR]
-          }' > jp_ips.txt
 
+          {
+            print $0 "#日本" c[NR]
+          }
+          ' > jp_ips.txt
+
+          echo ""
           echo "提取完成，日本节点预览："
           cat jp_ips.txt
 
+          # 防止上游异常导致空文件
+          if [ ! -s jp_ips.txt ]; then
+            echo "错误：没有找到任何 JP / 日本 节点！"
+            exit 1
+          fi
+
+          COUNT=$(wc -l < jp_ips.txt)
+
+          if [ "$COUNT" -lt 4 ]; then
+            echo "错误：JP / 日本节点不足 4 个，实际只有 $COUNT 个！"
+            exit 1
+          fi
+
       - name: Commit and Push
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add jp_ips.txt
-          git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')" || exit 0
+
+          if git diff --cached --quiet; then
+            echo "日本 IP 列表没有变化，无需提交。"
+            exit 0
+          fi
+
+          git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')"
           git push
+```
