@@ -1,104 +1,102 @@
-```yaml
 name: Extract JP IPs
 
 on:
-  schedule:
-    - cron: '10 0 * * *' # 每天北京时间 08:10
-  workflow_dispatch:      # 允许手动点击运行
+schedule:
+- cron: '10 0 * * *' # 每天北京时间 08:10
+workflow_dispatch: # 允许手动点击运行
 
 jobs:
-  extract:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+extract:
+runs-on: ubuntu-latest
+permissions:
+contents: write
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout code
+    uses: actions/checkout@v4
 
-      - name: Download and Filter
-        run: |
-          set -euo pipefail
+  - name: Download and Filter
+    run: |
+      set -euo pipefail
 
-          URL="https://bestcf.pages.dev/moistr/all.txt"
+      URL="https://bestcf.pages.dev/moistr/all.txt"
 
-          echo "开始下载 IP 列表..."
+      echo "开始下载 IP 列表..."
 
-          curl -fsSL \
-            --retry 3 \
-            --retry-delay 3 \
-            --connect-timeout 20 \
-            --max-time 60 \
-            "$URL" \
-            -o all.txt
+      curl -fsSL \
+        --retry 3 \
+        --retry-delay 3 \
+        --connect-timeout 20 \
+        --max-time 60 \
+        "$URL" \
+        -o all.txt
 
-          echo "下载完成："
-          wc -l all.txt
+      echo "下载完成："
+      wc -l all.txt
 
-          echo "开始筛选 JP / 日本 节点..."
+      echo "开始筛选 JP / 日本 节点..."
 
-          # 1. 抓取包含 JP 或 日本 的行
-          # 2. 提取第一个空格前的 IP:Port#备注
-          # 3. 去掉原有 # 及其后面的备注
-          # 4. 去重
-          # 5. 随机抽取 4 个
-          # 6. 自动添加 #日本第一 ～ #日本第四
+      # 1. 抓取包含 JP 或 日本 的行
+      # 2. 提取第一个空格前的 IP:Port#备注
+      # 3. 去掉原有 # 及后面的备注
+      # 4. 去重
+      # 5. 随机抽取 4 个
+      # 6. 自动添加 #日本第一 ～ #日本第四
 
-          awk '
-          /JP|日本/ {
+      awk '
+      /JP|日本/ {
 
-            ip_port = $1
+        ip_port = $1
 
-            # 去掉原有 # 及后面的备注
-            sub(/#.*/, "", ip_port)
+        # 去掉原有 # 及后面的备注
+        sub(/#.*/, "", ip_port)
 
-            # 去重
-            if (!seen[ip_port]++) {
-              print ip_port
-            }
-          }
-          ' all.txt \
-          | shuf \
-          | head -n 4 \
-          | awk '
-          BEGIN {
-            split("第一 第二 第三 第四", c, " ")
-          }
+        # 去重
+        if (!seen[ip_port]++) {
+          print ip_port
+        }
+      }
+      ' all.txt \
+      | shuf \
+      | head -n 4 \
+      | awk '
+      BEGIN {
+        split("第一 第二 第三 第四", c, " ")
+      }
 
-          {
-            print $0 "#日本" c[NR]
-          }
-          ' > jp_ips.txt
+      {
+        print $0 "#日本" c[NR]
+      }
+      ' > jp_ips.txt
 
-          echo ""
-          echo "提取完成，日本节点预览："
-          cat jp_ips.txt
+      echo ""
+      echo "提取完成，日本节点预览："
+      cat jp_ips.txt
 
-          # 防止上游异常导致空文件
-          if [ ! -s jp_ips.txt ]; then
-            echo "错误：没有找到任何 JP / 日本 节点！"
-            exit 1
-          fi
+      # 防止上游异常导致空文件
+      if [ ! -s jp_ips.txt ]; then
+        echo "错误：没有找到任何 JP / 日本 节点！"
+        exit 1
+      fi
 
-          COUNT=$(wc -l < jp_ips.txt)
+      COUNT=$(wc -l < jp_ips.txt)
 
-          if [ "$COUNT" -lt 4 ]; then
-            echo "错误：JP / 日本节点不足 4 个，实际只有 $COUNT 个！"
-            exit 1
-          fi
+      if [ "$COUNT" -lt 4 ]; then
+        echo "错误：JP / 日本节点不足 4 个，实际只有 $COUNT 个！"
+        exit 1
+      fi
 
-      - name: Commit and Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+  - name: Commit and Push
+    run: |
+      git config user.name "github-actions[bot]"
+      git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add jp_ips.txt
+      git add jp_ips.txt
 
-          if git diff --cached --quiet; then
-            echo "日本 IP 列表没有变化，无需提交。"
-            exit 0
-          fi
+      if git diff --cached --quiet; then
+        echo "日本 IP 列表没有变化，无需提交。"
+        exit 0
+      fi
 
-          git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')"
-          git push
-```
+      git commit -m "Update JP IP list $(date +'%Y-%m-%d %H:%M')"
+      git push
