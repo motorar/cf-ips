@@ -1,4 +1,4 @@
-name: Extract CloudFront Telecom IPv4
+name: Extract Cloudflare Telecom IPv4
 
 on:
   schedule:
@@ -21,10 +21,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          URL="https://www.wetest.vip/page/cloudfront/address_v4.html"
+          URL="https://www.wetest.vip/page/cloudflare/address_v4.html"
           export OUTPUT_FILE="wtv4.txt"
 
-          echo "开始抓取 CloudFront IPv4 网页数据..."
+          echo "开始抓取 Cloudflare IPv4 网页数据..."
           curl -fsSL \
             --retry 3 \
             --retry-delay 3 \
@@ -55,6 +55,7 @@ jobs:
           seen = set()
 
           for row in rows:
+              # 1. 过滤包含“电信”的行
               if '电信' not in row:
                   continue
 
@@ -68,14 +69,17 @@ jobs:
 
               dc_match = re.search(r'data-label=["\']数据中心["\'][^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
               if dc_match:
-                  dc = re.sub(r'<[^>]+>', '', dc_match.group(1)).strip()
+                  raw_dc = re.sub(r'<[^>]+>', '', dc_match.group(1)).strip()
+                  # 提取英文字母代号（如 KIX, NRT, SJC, LAX 等）
+                  m = re.search(r'[A-Za-z0-9\-]+', raw_dc)
+                  if m:
+                      dc = m.group(0).upper()
 
               # 方案 B：容错兜底逐单元格匹配
               if not ip or not dc:
                   tds = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
                   for td in tds:
                       clean_td = re.sub(r'<[^>]+>', '', td).strip()
-                      # 清洗可能存在的空格或尾部端口
                       clean_ip = re.sub(r'[\s\[\]]', '', clean_td)
                       clean_ip = re.sub(r':\d+$', '', clean_ip)
 
@@ -83,13 +87,15 @@ jobs:
                       if not ip and re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', clean_ip):
                           ip = clean_ip
 
-                      # 匹配带 P 的数据中心代码（如 SIN2-P11、HKG62-P1）
-                      if not dc and 'P' in clean_td.upper():
-                          if not re.search(r'[毫秒MBkB/s]|^\d{4}-', clean_td) and len(clean_td) < 20:
-                              dc = clean_td
+                      # 匹配包含英文字母的数据中心代码，排除带宽(MB)、延迟(毫秒)、速率(kB/s)、日期和运营商名称
+                      if not dc and re.search(r'[A-Za-z]', clean_td):
+                          if not re.search(r'[毫秒MBkB/sms]|^\d{4}-|电信|移动|联通', clean_td) and len(clean_td) < 20:
+                              m = re.search(r'[A-Za-z0-9\-]+', clean_td)
+                              if m:
+                                  dc = m.group(0).upper()
 
-              if ip and dc and ('P' in dc.upper()):
-                  # 清洗提取纯净 IPv4
+              # 只要包含有效 IPv4 且数据中心包含字母即可提取
+              if ip and dc and re.search(r'[A-Za-z]', dc):
                   pure_ip = re.sub(r'[\s\[\]]', '', ip)
                   pure_ip = re.sub(r':\d+$', '', pure_ip)
 
@@ -130,5 +136,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update CloudFront Telecom IPv4 list $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git commit -m "Update Cloudflare Telecom IPv4 list $(date -u +'%Y-%m-%d %H:%M') UTC"
           git push
