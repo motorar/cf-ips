@@ -21,7 +21,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          URL="https://www.wetest.vip/page/cloudfront/address_v6.html"
+          URL="https://www.wetest.vip/page/cloudflare/address_v6.html"
           export OUTPUT_FILE="wtv6.txt"
 
           echo "开始抓取目标网页数据..."
