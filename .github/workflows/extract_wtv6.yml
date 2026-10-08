@@ -22,7 +22,7 @@ jobs:
           set -euo pipefail
 
           URL="https://www.wetest.vip/page/cloudfront/address_v6.html"
-          OUTPUT_FILE="cloudfront_ips.txt"
+          OUTPUT_FILE="wtv6.txt"
 
           echo "开始抓取目标网页数据..."
           curl -fsSL \
