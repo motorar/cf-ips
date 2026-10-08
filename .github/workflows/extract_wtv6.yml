@@ -41,7 +41,7 @@ jobs:
           import re
           import sys
 
-          # 自动获取 Bash 环境变量中定义的文件名，两边永远保持同步
+          # 自动获取 Bash 环境变量中定义的文件名
           output_filename = os.environ.get('OUTPUT_FILE', 'wtv6.txt')
 
           try:
@@ -83,13 +83,14 @@ jobs:
                       if not ip and clean_ip.count(':') >= 2 and re.match(r'^[0-9a-fA-F:]+$', clean_ip):
                           ip = clean_ip
 
-                      # 匹配带 P 的数据中心代码（如 SIN3-P5、HKG62-P1）
+                      # 匹配带 P 的数据中心代码（如 SIN2-P11、HKG62-P1）
                       if not dc and 'P' in clean_td.upper():
                           if not re.search(r'[毫秒MBkB/s]|^\d{4}-', clean_td) and len(clean_td) < 20:
                               dc = clean_td
 
+              # 格式化输出为：IP:443#电信机房 IP
               if ip and dc and ('P' in dc.upper()):
-                  line = f"电信{dc} {ip}"
+                  line = f"{ip}:443#电信{dc} {ip}"
                   if line not in seen:
                       seen.add(line)
                       results.append(line)
@@ -98,7 +99,6 @@ jobs:
               print("::error::未解析到任何电信 IPv6 数据，请检查网页结构！", file=sys.stderr)
               sys.exit(1)
 
-          # 写入与环境变量一致的文件名
           with open(output_filename, 'w', encoding='utf-8') as f:
               for line in results:
                   f.write(line + '\n')
