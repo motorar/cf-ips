@@ -1,0 +1,126 @@
+name: Extract CloudFront Telecom IPv6
+
+on:
+  schedule:
+    # 每天 UTC 00:10 (北京时间 08:10) 运行，可根据需要调整
+    - cron: '10 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download, Parse and Format
+        run: |
+          set -euo pipefail
+
+          URL="https://www.wetest.vip/page/cloudfront/address_v6.html"
+          OUTPUT_FILE="cloudfront_ips.txt"
+
+          echo "开始抓取目标网页数据..."
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 30 \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            "$URL" \
+            -o page.html
+
+          echo "下载完成，正在解析电信 IPv6 及数据中心信息..."
+
+          python3 - << 'EOF'
+          import re
+          import sys
+
+          try:
+              with open('page.html', 'r', encoding='utf-8', errors='ignore') as f:
+                  html = f.read()
+          except Exception as e:
+              print(f"::error::读取网页内容失败: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          # 匹配所有 <tr> 表格行
+          rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+          results = []
+          seen = set()
+
+          for row in rows:
+              # 1. 过滤只包含“电信”的行
+              if '电信' not in row:
+                  continue
+
+              ip = None
+              dc = None
+
+              # 方案 A：优先通过移动端/响应式 table 常见的 data-label 提取
+              ip_match = re.search(r'data-label=["\']优选地址["\'][^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+              if ip_match:
+                  ip = re.sub(r'<[^>]+>', '', ip_match.group(1)).strip()
+
+              dc_match = re.search(r'data-label=["\']数据中心["\'][^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+              if dc_match:
+                  dc = re.sub(r'<[^>]+>', '', dc_match.group(1)).strip()
+
+              # 方案 B（容错兜底）：若无 data-label，遍历单元格匹配
+              if not ip or not dc:
+                  tds = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+                  for td in tds:
+                      clean_td = re.sub(r'<[^>]+>', '', td).strip()
+                      # 匹配至少包含两个冒号的标准 IPv6
+                      if not ip and clean_td.count(':') >= 2 and re.match(r'^[0-9a-fA-F:]+$', clean_td):
+                          ip = clean_td
+                      # 匹配包含字母 'P' 的数据中心名称，排除带宽、延迟和日期
+                      if not dc and 'P' in clean_td.upper():
+                          if not re.search(r'[毫秒MBkB/s]|^\d{4}-', clean_td) and len(clean_td) < 20:
+                              dc = clean_td
+
+              # 校验：存在有效 IP，且数据中心确实包含字母 P
+              if ip and dc and ('P' in dc.upper()):
+                  line = f"电信{dc} {ip}"
+                  if line not in seen:
+                      seen.add(line)
+                      results.append(line)
+
+          if not results:
+              print("::error::未解析到任何电信 IPv6 数据，请检查网页结构！", file=sys.stderr)
+              sys.exit(1)
+
+          # 写入目标文件
+          with open('cloudfront_ips.txt', 'w', encoding='utf-8') as f:
+              for line in results:
+                  f.write(line + '\n')
+
+          print(f"成功提取并格式化 {len(results)} 条电信节点。")
+          EOF
+
+          # 清理临时网页文件
+          rm -f page.html
+
+          echo ""
+          echo "================ 最终生成的节点文件 ================"
+          cat "$OUTPUT_FILE"
+          echo "==================================================="
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          OUTPUT_FILE="wtv6.txt"
+          git add "$OUTPUT_FILE"
+
+          if git diff --cached --quiet; then
+            echo "节点列表无变动，跳过提交。"
+            exit 0
+          fi
+
+          git commit -m "Update CloudFront Telecom IPv6 list $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push
