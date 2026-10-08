@@ -1,0 +1,134 @@
+name: Extract CloudFront Telecom IPv4
+
+on:
+  schedule:
+    # 每天 UTC 00:15 (北京时间 08:15) 运行，稍微错开几分钟
+    - cron: '15 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download, Parse and Format
+        run: |
+          set -euo pipefail
+
+          URL="https://www.wetest.vip/page/cloudfront/address_v4.html"
+          export OUTPUT_FILE="wtv4.txt"
+
+          echo "开始抓取 CloudFront IPv4 网页数据..."
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 30 \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+            "$URL" \
+            -o page.html
+
+          echo "下载完成，正在解析电信 IPv4 及数据中心信息..."
+
+          python3 - << 'EOF'
+          import os
+          import re
+          import sys
+
+          output_filename = os.environ.get('OUTPUT_FILE', 'wtv4.txt')
+
+          try:
+              with open('page.html', 'r', encoding='utf-8', errors='ignore') as f:
+                  html = f.read()
+          except Exception as e:
+              print(f"::error::读取网页内容失败: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+          results = []
+          seen = set()
+
+          for row in rows:
+              if '电信' not in row:
+                  continue
+
+              ip = None
+              dc = None
+
+              # 方案 A：优先通过 data-label 提取
+              ip_match = re.search(r'data-label=["\']优选地址["\'][^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+              if ip_match:
+                  ip = re.sub(r'<[^>]+>', '', ip_match.group(1)).strip()
+
+              dc_match = re.search(r'data-label=["\']数据中心["\'][^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+              if dc_match:
+                  dc = re.sub(r'<[^>]+>', '', dc_match.group(1)).strip()
+
+              # 方案 B：容错兜底逐单元格匹配
+              if not ip or not dc:
+                  tds = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+                  for td in tds:
+                      clean_td = re.sub(r'<[^>]+>', '', td).strip()
+                      # 清洗可能存在的空格或尾部端口
+                      clean_ip = re.sub(r'[\s\[\]]', '', clean_td)
+                      clean_ip = re.sub(r':\d+$', '', clean_ip)
+
+                      # 正则匹配标准 IPv4 地址
+                      if not ip and re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', clean_ip):
+                          ip = clean_ip
+
+                      # 匹配带 P 的数据中心代码（如 SIN2-P11、HKG62-P1）
+                      if not dc and 'P' in clean_td.upper():
+                          if not re.search(r'[毫秒MBkB/s]|^\d{4}-', clean_td) and len(clean_td) < 20:
+                              dc = clean_td
+
+              if ip and dc and ('P' in dc.upper()):
+                  # 清洗提取纯净 IPv4
+                  pure_ip = re.sub(r'[\s\[\]]', '', ip)
+                  pure_ip = re.sub(r':\d+$', '', pure_ip)
+
+                  # 格式化输出为：IP:443#电信机房 IP
+                  line = f"{pure_ip}:443#电信{dc} {pure_ip}"
+                  if line not in seen:
+                      seen.add(line)
+                      results.append(line)
+
+          if not results:
+              print("::error::未解析到任何电信 IPv4 数据，请检查网页结构！", file=sys.stderr)
+              sys.exit(1)
+
+          with open(output_filename, 'w', encoding='utf-8') as f:
+              for line in results:
+                  f.write(line + '\n')
+
+          print(f"成功提取并格式化 {len(results)} 条电信节点到 {output_filename}。")
+          EOF
+
+          rm -f page.html
+
+          echo ""
+          echo "================ 最终生成的节点文件 ($OUTPUT_FILE) ================"
+          cat "$OUTPUT_FILE"
+          echo "================================================================="
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          OUTPUT_FILE="wtv4.txt"
+          git add "$OUTPUT_FILE"
+
+          if git diff --cached --quiet; then
+            echo "节点列表无变动，跳过提交。"
+            exit 0
+          fi
+
+          git commit -m "Update CloudFront Telecom IPv4 list $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push
